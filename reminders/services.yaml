@@ -1,0 +1,55 @@
+add_item:
+  target:
+    entity:
+      domain: reminders
+  fields:
+    summary:
+      example: "Reminder summary"
+      required: True
+      selector:
+        text:
+    due:
+      required: False
+      example: "2023-11-17 13:30:00"
+      selector:
+        datetime:
+update_item:
+  target:
+    entity:
+      domain: reminders
+  fields:
+    uid:
+      required: true
+      example: "3fc3"
+      selector:
+        text:
+    summary:
+      example: "Reminder summary"
+      required: True
+      selector:
+        text:
+    due:
+      required: True
+      example: "2023-11-17 13:30:00"
+      selector:
+        datetime:
+remove_item:
+  target:
+    entity:
+      domain: reminders
+  fields:
+    uid:
+      required: true
+      example: "3fc3"
+      selector:
+        text:
+get_items:
+  target:
+    entity:
+      domain: reminders
+  fields: 
+    uid:
+      required: false
+      example: "3fc3"
+      selector:
+        text:

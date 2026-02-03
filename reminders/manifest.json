@@ -1,0 +1,11 @@
+{
+  "domain": "reminders",
+  "name": "Reminders",
+  "version": "1.0.0",
+
+  "documentation": "",
+  "requirements": [],
+  "dependencies": [],
+
+  "codeowners": ["qedi"]
+}
