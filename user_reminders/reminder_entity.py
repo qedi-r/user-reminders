@@ -3,7 +3,7 @@ from typing import Any, Sequence
 from uuid import uuid4
 
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import UnknownUser
+from homeassistant.exceptions import Unauthorized, UnknownUser
 from homeassistant.helpers.entity import generate_entity_id
 from propcache.api import cached_property
 
@@ -19,12 +19,19 @@ from .const import DOMAIN, LOGGER
 
 async def _get_user_from_call(hass: HomeAssistant, call: ServiceCall):
     user_data = None
-    event_driven_user = None
-
     if call.context.user_id:
         user_data = await hass.auth.async_get_user(call.context.user_id)
 
+    if user_data is None:
+        LOGGER.warning(f"Unknown user: {call.context.user_id}")
+        return None
+
+    return user_data.id
+
+
+async def _is_automation_driven_user(hass: HomeAssistant, call: ServiceCall):
     event = call.context.origin_event
+    user_data = None
     if event and event.event_type == "automation_triggered":
         event_driven_user = call.data.get("user")
         users = await hass.auth.async_get_users()
@@ -32,11 +39,9 @@ async def _get_user_from_call(hass: HomeAssistant, call: ServiceCall):
             if u.name == event_driven_user:
                 user_data = u
 
-    if user_data is None:
-        LOGGER.warning(f"Unknown user: {call.context.user_id}")
-        raise UnknownUser(context=call.context)
-
-    return user_data.id
+    if user_data:
+        return user_data.id
+    return None
 
 
 def find_in_reminder_list(
@@ -114,6 +119,9 @@ class UserRemindersListEntity(ReminderListEntity):
         )
         self._sync_reminders_to_items()
 
+    def is_for_user(self, user_id):
+        return self._user_id == user_id
+
     def _load_reminders(
         self, reminders: dict[str, dict[str, str]]
     ) -> Sequence[ReminderItem]:
@@ -175,8 +183,17 @@ class UserRemindersListEntity(ReminderListEntity):
     ) -> None:
         LOGGER.debug(f"Creating reminder item: {item.summary}")
 
-        ctx_uid = await _get_user_from_call(self.hass, call)
+        import pdb
+
+        pdb.set_trace()
+        ctx_uid = await _get_user_from_call(
+            self.hass, call
+        ) or await _is_automation_driven_user(self.hass, call)
+        if ctx_uid != self._user_id:
+            raise Unauthorized()
+
         item.list_id = self._attr_unique_id
+
         reminder = item.build(ctx_uid)
 
         reminders = self.hass.data[DOMAIN]["reminders"]
@@ -189,15 +206,17 @@ class UserRemindersListEntity(ReminderListEntity):
             "last_fired": None,
         }
 
-        await self.hass.data[DOMAIN]["store"].async_save(reminders)
         self._sync_reminders_to_items()
         self.async_write_ha_state()
+        await self.hass.data[DOMAIN]["store"].async_save(reminders)
 
     async def async_update_reminder_item(
         self, call: ServiceCall, item: ReminderItem
     ) -> None:
         LOGGER.debug(f"Updating reminder item: {item.uid}")
         ctx_uid = await _get_user_from_call(self.hass, call)
+        if ctx_uid != self._user_id:
+            raise Unauthorized()
 
         reminders_dict = self.hass.data[DOMAIN]["reminders"]
         reminders = self._load_reminders(reminders_dict)
@@ -213,22 +232,20 @@ class UserRemindersListEntity(ReminderListEntity):
             "summary": item.summary or reminders_dict[item.uid].get("summary", ""),
             "due": due.isoformat() if due else reminders_dict[item.uid].get("due"),
             "user_id": reminders_dict[item.uid].get("user_id"),
-            "last_fired": (
-                item.last_fired.isoformat()
-                if item.last_fired
-                else None
-            ),
+            "last_fired": (item.last_fired.isoformat() if item.last_fired else None),
         }
 
-        await self.hass.data[DOMAIN]["store"].async_save(reminders_dict)
         self._sync_reminders_to_items()
         self.async_write_ha_state()
+        await self.hass.data[DOMAIN]["store"].async_save(reminders_dict)
 
     async def async_remove_reminder_items(
         self, call: ServiceCall, uids: list[str]
     ) -> None:
         LOGGER.debug(f"Deleting reminder items: {uids}")
         ctx_uid = await _get_user_from_call(self.hass, call)
+        if ctx_uid != self._user_id:
+            raise Unauthorized()
 
         reminders_dict = self.hass.data[DOMAIN]["reminders"]
         reminders = self._load_reminders(reminders_dict)
@@ -238,9 +255,9 @@ class UserRemindersListEntity(ReminderListEntity):
             if reminder:
                 del reminders_dict[uid]
 
-        await self.hass.data[DOMAIN]["store"].async_save(reminders_dict)
         self._sync_reminders_to_items()
         self.async_write_ha_state()
+        await self.hass.data[DOMAIN]["store"].async_save(reminders_dict)
 
     async def async_get_reminder_items(
         self, call: ServiceCall, uids: list[str] | None

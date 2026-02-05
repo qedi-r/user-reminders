@@ -8,7 +8,7 @@ from custom_components.reminders.const import ReminderItem, ReminderServices
 
 from .const import DOMAIN, EVENT_REMINDER_DUE, LOGGER
 
-CHECK_INTERVAL = timedelta(seconds=10)
+CHECK_INTERVAL = timedelta(seconds=30)
 
 
 def last_fired_in_over_24h(r: ReminderItem):

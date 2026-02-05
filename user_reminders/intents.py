@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Sequence
 import re
 
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, Context
 from homeassistant.helpers.intent import Intent, IntentHandler, IntentResponse
 from homeassistant.helpers.intent import async_register
 from homeassistant.components.conversation import default_agent
@@ -21,6 +21,13 @@ from custom_components.reminders.const import (
     ReminderItem,
     ReminderServices,
 )
+
+# 12:33, 2:33, 02:33
+TWENTY_FOUR_HOUR_FORMAT_REGEX = r"^(\d{1,2}):(\d{2})$"
+
+# 12:33am, 1:33pm, 12pm, 3am
+# 12:33 will assume AM
+TWELVE_HOUR_FORMAT_REGEX = r"^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$"
 
 # Mapping day names to weekday numbers (Monday=0, Sunday=6)
 DAY_NAME_TO_WEEKDAY = {
@@ -229,10 +236,9 @@ class ReminderTimeResolver:
         hour = hour.lower().strip()
 
         if minute:
-            LOGGER.warning(f"parsing 24h {hour}:{minute}")
             minute = minute.lower().strip()
             # Handle 24-hour format (15:00)
-            match = re.match(r"^(\d{1,2}):(\d{2})$", "{hour}:{minute}")
+            match = re.match(TWENTY_FOUR_HOUR_FORMAT_REGEX, "{hour}:{minute}")
             if match:
                 return int(match.group(1)), int(match.group(2))
 
@@ -241,8 +247,7 @@ class ReminderTimeResolver:
             time_str = f"{hour}:{minute}"
 
         # Handle 12-hour format (3pm, 3:30pm)
-        match = re.match(r"^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$", time_str)
-        LOGGER.warning(f"parsing 12h  {time_str}")
+        match = re.match(TWELVE_HOUR_FORMAT_REGEX, time_str)
         if match:
             hour_v = int(match.group(1))
             minute_v = int(match.group(2)) if match.group(2) else None
@@ -263,16 +268,23 @@ class ReminderTimeResolver:
 
 
 class ReminderIntentHandlerBase(IntentHandler):
-    def find_entity(self, hass: HomeAssistant) -> UserRemindersListEntity | None:
+    def find_entity(
+        self, hass: HomeAssistant, ctx: Context
+    ) -> UserRemindersListEntity | None:
         component = hass.data.get(DATA_COMPONENT)
         if not component or not component.entities:
             return None
 
-        entity = list(component.entities)[0] if component.entities else None
-        if not entity:
-            return None
+        for entity in list(component.entities or []):
+            if not entity:
+                continue
 
-        if isinstance(entity, UserRemindersListEntity):
+            if not isinstance(entity, UserRemindersListEntity):
+                continue
+
+            if not entity.is_for_user(ctx.user_id):
+                continue
+
             return entity
 
         return None
@@ -360,7 +372,7 @@ class ListRemindersIntentHandler(ReminderIntentHandlerBase):
         hass = intent_obj.hass
         context = intent_obj.context
 
-        entity = self.find_entity(hass)
+        entity = self.find_entity(hass, intent_obj.context)
         if not entity or not entity._attr_unique_id:
             return intent_obj.create_response()
         unique_id = entity._attr_unique_id
@@ -409,9 +421,7 @@ class CreateReminderIntentHandler(ReminderIntentHandlerBase):
         context = intent_obj.context
         reminder_text = intent_obj.slots.get("reminder_text", {}).get("text", "")
 
-        LOGGER.warning(f"creating  {intent_obj.slots}")
-
-        entity = self.find_entity(hass)
+        entity = self.find_entity(hass, intent_obj.context)
         if not entity or not entity._attr_unique_id:
             return intent_obj.create_response()
 
@@ -452,7 +462,7 @@ class CompleteReminderIntentHandler(ReminderIntentHandlerBase):
         context = intent_obj.context
         reminder_text = intent_obj.slots.get("reminder_text", {}).get("text", "")
 
-        entity = self.find_entity(hass)
+        entity = self.find_entity(hass, intent_obj.context)
         if not entity or not entity._attr_unique_id:
             return intent_obj.create_response()
         unique_id = entity._attr_unique_id
@@ -506,7 +516,7 @@ class UpdateReminderIntentHandler(ReminderIntentHandlerBase):
         reminder_text = intent_obj.slots.get("reminder_text", {}).get("text", "")
         new_text = intent_obj.slots.get("new_reminder_text", {}).get("text", "")
 
-        entity = self.find_entity(hass)
+        entity = self.find_entity(hass, intent_obj.context)
         if not entity or not entity._attr_unique_id:
             return intent_obj.create_response()
         unique_id = entity._attr_unique_id

@@ -86,9 +86,14 @@ class ReminderListEntity(Entity, cached_properties=CACHED_PROPERTIES_WITH_ATTR_)
     _attr_reminder_items: list[ReminderItem] | None = None
     _update_listeners: list[Callable[[list[JsonValueType] | None], None]] | None = None
 
+    @property
+    def state(self) -> int | None: # type: ignore
+        LOGGER.debug(f"updating reminder list entity state")
+        return len(self.reminder_items or [])
+
     @cached_property
-    def state(self) -> int | None:
-        return len(self._attr_reminder_items or [])
+    def reminder_items(self) -> list[ReminderItem] | None:
+        return self._attr_reminder_items
 
     async def async_create_reminder_item(
         self, call: ServiceCall, item: ReminderItemFactory
