@@ -1,20 +1,15 @@
-from datetime import date, datetime, time, timedelta
-from typing import Any, Sequence
-from uuid import uuid4
+import dataclasses
+from datetime import datetime
+from typing import Any, Callable, Sequence, final
 
-from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import Unauthorized, UnknownUser
-from homeassistant.helpers.entity import generate_entity_id
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, ServiceCall, callback
+from homeassistant.exceptions import Unauthorized
+from homeassistant.helpers.entity import Entity, generate_entity_id
+from homeassistant.util.json import JsonValueType
 from propcache.api import cached_property
 
-from custom_components.reminders import ReminderListEntity
-from custom_components.reminders.const import (
-    ReminderItem,
-    ReminderItemFactory,
-    ReminderListEntityFeature,
-)
-
-from .const import DOMAIN, LOGGER
+from .const import DOMAIN, LOGGER, ENTITY_FORMAT, ReminderListEntityFeature
+from .reminder_item import ReminderItem, ReminderItemFactory
 
 
 async def _get_user_from_call(hass: HomeAssistant, call: ServiceCall):
@@ -93,7 +88,12 @@ def load_reminders(
     return reminders_list
 
 
-class UserRemindersListEntity(ReminderListEntity):
+CACHED_PROPERTIES_WITH_ATTR_ = {
+    "reminder_items",
+}
+
+
+class ReminderListEntity(Entity, cached_properties=CACHED_PROPERTIES_WITH_ATTR_):
     """User Reminders To-do list entity."""
 
     def __init__(self, hass: HomeAssistant, user_id: str, user_name: str | None):
@@ -102,10 +102,14 @@ class UserRemindersListEntity(ReminderListEntity):
         self._user_name = user_name
         self._attr_name = f"{user_name}'s Reminders"
         self._attr_reminder_list = []
+        self._attr_reminder_items: list[ReminderItem] | None = None
+        self._update_listeners: (
+            list[Callable[[list[JsonValueType] | None], None]] | None
+        ) = None
 
         from homeassistant.util import slugify
 
-        self._attr_unique_id = f"{DOMAIN}_{slugify(user_name)}"
+        self._attr_unique_id = ENTITY_FORMAT.format(slugify(user_name))
 
         self._attr_icon = "mdi:check-circle-outline"
         self._attr_supported_features = (
@@ -115,9 +119,60 @@ class UserRemindersListEntity(ReminderListEntity):
             | ReminderListEntityFeature.GET_REMINDER_ITEM_LIST
         )
         self.entity_id = generate_entity_id(
-            f"{DOMAIN}.{{}}", self._attr_unique_id, hass=hass
+            entity_id_format=".".join([DOMAIN, "{}"]),
+            name=self._attr_unique_id,
+            hass=hass,
         )
         self._sync_reminders_to_items()
+
+    @property
+    def state(self) -> int | None:  # type: ignore
+        LOGGER.debug(f"updating reminder list entity state")
+        return len(self.reminder_items or [])
+
+    @cached_property
+    def reminder_items(self) -> list[ReminderItem] | None:
+        return self._attr_reminder_items
+
+    @final
+    @callback
+    def async_subscribe_updates(
+        self,
+        listener: Callable[[list[JsonValueType] | None], None],
+    ) -> CALLBACK_TYPE:
+        """Subscribe to Reminder list item updates.
+
+        Called by websocket API.
+        """
+        if self._update_listeners is None:
+            self._update_listeners = []
+        self._update_listeners.append(listener)
+
+        @callback
+        def unsubscribe() -> None:
+            if self._update_listeners:
+                self._update_listeners.remove(listener)
+
+        return unsubscribe
+
+    @final
+    @callback
+    def async_update_listeners(self) -> None:
+        """Push updated Reminder items to all listeners."""
+        if not self._update_listeners:
+            return
+
+        reminder_items: list[JsonValueType] = [
+            dataclasses.asdict(item) for item in self._attr_reminder_items or ()
+        ]
+        for listener in self._update_listeners:
+            listener(reminder_items)
+
+    @callback
+    def _async_write_ha_state(self) -> None:
+        """Notify Reminder item subscribers."""
+        super()._async_write_ha_state()
+        self.async_update_listeners()
 
     def is_for_user(self, user_id):
         return self._user_id == user_id
@@ -140,7 +195,10 @@ class UserRemindersListEntity(ReminderListEntity):
         }
 
     def _sync_reminders_to_items(self):
-        reminders = self.hass.data[DOMAIN]["reminders"]
+        from . import DATA_REMINDER
+
+        domain_data = self.hass.data[DATA_REMINDER]
+        reminders = domain_data.reminders or {}
         items = []
 
         for reminder in reminders.values():
@@ -169,9 +227,7 @@ class UserRemindersListEntity(ReminderListEntity):
             items.append(item)
 
         self._attr_reminder_items = items
-        self._attr_reminder_list = list(
-            map(UserRemindersListEntity._api_item_list, items)
-        )
+        self._attr_reminder_list = list(map(ReminderListEntity._api_item_list, items))
         LOGGER.warning(f"Loaded {len(items)} reminders for user {self._user_name}")
 
     def _find_in_reminder_list(self, ctx_uid, item_uid, reminders):
@@ -181,11 +237,10 @@ class UserRemindersListEntity(ReminderListEntity):
     async def async_create_reminder_item(
         self, call: ServiceCall, item: ReminderItemFactory
     ) -> None:
+        from . import DATA_REMINDER
+
         LOGGER.debug(f"Creating reminder item: {item.summary}")
 
-        import pdb
-
-        pdb.set_trace()
         ctx_uid = await _get_user_from_call(
             self.hass, call
         ) or await _is_automation_driven_user(self.hass, call)
@@ -196,7 +251,8 @@ class UserRemindersListEntity(ReminderListEntity):
 
         reminder = item.build(ctx_uid)
 
-        reminders = self.hass.data[DOMAIN]["reminders"]
+        domain_data = self.hass.data[DATA_REMINDER]
+        reminders = domain_data.reminders or {}
         reminders[reminder.uid] = {
             "id": reminder.uid,
             "list_id": self._attr_unique_id,
@@ -208,17 +264,21 @@ class UserRemindersListEntity(ReminderListEntity):
 
         self._sync_reminders_to_items()
         self.async_write_ha_state()
-        await self.hass.data[DOMAIN]["store"].async_save(reminders)
+        if domain_data.store:
+            await domain_data.store.async_save(reminders)
 
     async def async_update_reminder_item(
         self, call: ServiceCall, item: ReminderItem
     ) -> None:
+        from . import DATA_REMINDER
+
         LOGGER.debug(f"Updating reminder item: {item.uid}")
         ctx_uid = await _get_user_from_call(self.hass, call)
         if ctx_uid != self._user_id:
             raise Unauthorized()
 
-        reminders_dict = self.hass.data[DOMAIN]["reminders"]
+        domain_data = self.hass.data[DATA_REMINDER]
+        reminders_dict = domain_data.reminders or {}
         reminders = self._load_reminders(reminders_dict)
         reminder = self._find_in_reminder_list(ctx_uid, item.uid, reminders)
         if not reminder:
@@ -237,17 +297,21 @@ class UserRemindersListEntity(ReminderListEntity):
 
         self._sync_reminders_to_items()
         self.async_write_ha_state()
-        await self.hass.data[DOMAIN]["store"].async_save(reminders_dict)
+        if domain_data.store:
+            await domain_data.store.async_save(reminders_dict)
 
     async def async_remove_reminder_items(
         self, call: ServiceCall, uids: list[str]
     ) -> None:
+        from . import DATA_REMINDER
+
         LOGGER.debug(f"Deleting reminder items: {uids}")
         ctx_uid = await _get_user_from_call(self.hass, call)
         if ctx_uid != self._user_id:
             raise Unauthorized()
 
-        reminders_dict = self.hass.data[DOMAIN]["reminders"]
+        domain_data = self.hass.data[DATA_REMINDER]
+        reminders_dict = domain_data.reminders or {}
         reminders = self._load_reminders(reminders_dict)
         LOGGER.debug(f"Current uids: {",".join(list(map(lambda r: r.uid, reminders)))}")
         for uid in uids:
@@ -257,16 +321,20 @@ class UserRemindersListEntity(ReminderListEntity):
 
         self._sync_reminders_to_items()
         self.async_write_ha_state()
-        await self.hass.data[DOMAIN]["store"].async_save(reminders_dict)
+        if domain_data.store:
+            await domain_data.store.async_save(reminders_dict)
 
     async def async_get_reminder_items(
         self, call: ServiceCall, uids: list[str] | None
     ) -> Sequence[ReminderItem]:
+        from . import DATA_REMINDER
+
         ctx_uid = await _get_user_from_call(self.hass, call)
         LOGGER.debug(f"Getting reminder items: {uids} for {ctx_uid}")
 
+        domain_data = self.hass.data[DATA_REMINDER]
         current_reminders = []
-        reminders = self._load_reminders(self.hass.data[DOMAIN]["reminders"])
+        reminders = self._load_reminders(domain_data.reminders or {})
         if uids:
             for uid in uids:
                 reminder = self._find_in_reminder_list(ctx_uid, uid, reminders)

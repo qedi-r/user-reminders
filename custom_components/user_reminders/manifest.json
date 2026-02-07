@@ -1,12 +1,12 @@
 {
-  "domain": "user_reminders",
+  "domain": "reminders",
   "name": "User Reminders",
-  "version": "1.0.3",
+  "version": "0.1.3",
 
   "documentation": "",
   "requirements": [],
-  "dependencies": ["reminders", "frontend", "http"],
+  "dependencies": ["frontend", "http"],
 
-  "codeowners": ["qedi"],
+  "codeowners": ["qedi-r"],
   "config_flow": true
 }

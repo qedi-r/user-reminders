@@ -1,26 +1,21 @@
 """Intent handlers for user_reminders."""
 
-from datetime import date, datetime, timedelta
-from typing import Any, Sequence
 import re
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Sequence
 
-from homeassistant.core import HomeAssistant, Context
-from homeassistant.helpers.intent import Intent, IntentHandler, IntentResponse
-from homeassistant.helpers.intent import async_register
-from homeassistant.components.conversation import default_agent
-from homeassistant.util import dt as dt_util
 import voluptuous as vol
+from homeassistant.core import Context, HomeAssistant
+from homeassistant.helpers.intent import (Intent, IntentHandler,
+                                          IntentResponse, async_register)
+from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, LOGGER
-from .reminder_entity import (
-    UserRemindersListEntity,
-    load_reminders,
-)
-from custom_components.reminders import DATA_COMPONENT
-from custom_components.reminders.const import (
-    ReminderItem,
-    ReminderServices,
-)
+from .const import DOMAIN, LOGGER, ReminderServices
+from .reminder_entity import ReminderListEntity, load_reminders
+from .reminder_item import ReminderItem
+
+if TYPE_CHECKING:
+    from . import DATA_REMINDER
 
 # 12:33, 2:33, 02:33
 TWENTY_FOUR_HOUR_FORMAT_REGEX = r"^(\d{1,2}):(\d{2})$"
@@ -270,16 +265,18 @@ class ReminderTimeResolver:
 class ReminderIntentHandlerBase(IntentHandler):
     def find_entity(
         self, hass: HomeAssistant, ctx: Context
-    ) -> UserRemindersListEntity | None:
-        component = hass.data.get(DATA_COMPONENT)
-        if not component or not component.entities:
+    ) -> ReminderListEntity | None:
+        from . import DATA_REMINDER
+
+        domain_data = hass.data.get(DATA_REMINDER)
+        if not domain_data or not domain_data.component.entities:
             return None
 
-        for entity in list(component.entities or []):
+        for entity in list(domain_data.component.entities or []):
             if not entity:
                 continue
 
-            if not isinstance(entity, UserRemindersListEntity):
+            if not isinstance(entity, ReminderListEntity):
                 continue
 
             if not entity.is_for_user(ctx.user_id):
@@ -290,7 +287,10 @@ class ReminderIntentHandlerBase(IntentHandler):
         return None
 
     def get_reminders(self, hass, unique_id, user_id):
-        reminders_dict = hass.data[DOMAIN]["reminders"]
+        from . import DATA_REMINDER
+
+        domain_data = hass.data[DATA_REMINDER]
+        reminders_dict = domain_data.reminders or {}
         reminders = load_reminders(unique_id, reminders_dict)
 
         def reminder_filter(r: ReminderItem) -> Sequence[ReminderItem]:

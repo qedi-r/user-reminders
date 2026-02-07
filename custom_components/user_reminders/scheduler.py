@@ -3,7 +3,8 @@ from datetime import datetime, timedelta, timezone
 from homeassistant.core import CALLBACK_TYPE, Context, HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
 
-from custom_components.reminders.const import ReminderItem, ReminderServices
+from .const import ReminderServices
+from .reminder_item import ReminderItem
 
 
 from .const import DOMAIN, EVENT_REMINDER_DUE, LOGGER
@@ -27,9 +28,12 @@ class Scheduler:
 
     def start_scheduler(self, hass: HomeAssistant):
         async def _check(now):
+            from . import DATA_REMINDER
+
             LOGGER.debug("running scheduler")
+            domain_data = hass.data[DATA_REMINDER]
             reminders = []
-            for r in hass.data[DOMAIN]["reminders"].values():
+            for r in (domain_data.reminders or {}).values():
                 uid = r.get("id")
                 last_fired = r.get("last_fired")
                 if last_fired:
