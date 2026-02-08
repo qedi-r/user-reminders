@@ -29,7 +29,7 @@ I will note that Home Assistant wasn't exactly built for this, there may be edge
 
 #### HACS
 
-1. **Add to HACS**: copy this repository and paste into your HACS custom repostories.  [See the HACS FAQ for details](https://hacs.xyz/docs/faq/custom_repositories/)
+1. **Add to HACS**: copy this repository and paste into your HACS custom repostories. [See the HACS FAQ for details](https://hacs.xyz/docs/faq/custom_repositories/)
 
    ```url
    https://github.com/qedi-r/user_reminders
@@ -45,6 +45,10 @@ I will note that Home Assistant wasn't exactly built for this, there may be edge
 6. (Optional) Select users to exclude from automatic reminder list creation
 
 After installation, a reminder entity will be created for each non-system user in Home Assistant. Entity IDs follow the pattern: `reminder.{username}_reminders`
+
+### Sentences
+
+This ships with a set of english sentences to use. Copy the `custom_sentences_en_reminders.yaml` file to your custom_sentences directory, here: `custom_sentences/en/reminders.yaml`. You may need to create the directories if they do not exist.
 
 ## Configuration
 
