@@ -252,7 +252,9 @@ class ReminderListEntity(Entity, cached_properties=CACHED_PROPERTIES_WITH_ATTR_)
         reminder = item.build(ctx_uid)
 
         domain_data = self.hass.data[DATA_REMINDER]
-        reminders = domain_data.reminders or {}
+        if domain_data.reminders is None:
+            domain_data.reminders = {}
+        reminders = domain_data.reminders
         reminders[reminder.uid] = {
             "id": reminder.uid,
             "list_id": self._attr_unique_id,
@@ -278,7 +280,9 @@ class ReminderListEntity(Entity, cached_properties=CACHED_PROPERTIES_WITH_ATTR_)
             raise Unauthorized()
 
         domain_data = self.hass.data[DATA_REMINDER]
-        reminders_dict = domain_data.reminders or {}
+        if domain_data.reminders is None:
+            domain_data.reminders = {}
+        reminders_dict = domain_data.reminders
         reminders = self._load_reminders(reminders_dict)
         reminder = self._find_in_reminder_list(ctx_uid, item.uid, reminders)
         if not reminder:
@@ -311,7 +315,9 @@ class ReminderListEntity(Entity, cached_properties=CACHED_PROPERTIES_WITH_ATTR_)
             raise Unauthorized()
 
         domain_data = self.hass.data[DATA_REMINDER]
-        reminders_dict = domain_data.reminders or {}
+        if domain_data.reminders is None:
+            domain_data.reminders = {}
+        reminders_dict = domain_data.reminders
         reminders = self._load_reminders(reminders_dict)
         LOGGER.debug(f"Current uids: {",".join(list(map(lambda r: r.uid, reminders)))}")
         for uid in uids:
